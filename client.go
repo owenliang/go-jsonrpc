@@ -53,6 +53,8 @@ func (pconn *PersistConn)HealthCheck() {
 				pconn.mutex.Unlock()
 			}
 			pconn.lastRetry = now
+		} else {
+			pconn.mutex.Unlock()
 		}
 	}
 close:
