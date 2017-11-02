@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 	"proto"
+	"runtime"
 )
 
 func StartJsonrpcServer() {
@@ -31,6 +32,8 @@ func StartJsonrpcServer() {
 }
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	StartJsonrpcServer()
 	for {
 		time.Sleep(1 * time.Second)

@@ -6,9 +6,9 @@ import (
 	"net"
 	"net/rpc/jsonrpc"
 	"time"
-	"fmt"
 	"proto"
 	"errors"
+	"runtime"
 )
 
 const (
@@ -118,9 +118,11 @@ func (pconn *PersistConn)Call(serviceMethod string, args interface{}, reply inte
 }
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	pconn := NewPConn("127.0.0.1:5000", 1000, 1000)
 
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 100; i++ {
 		go func() {
 			for {
 				var count int
