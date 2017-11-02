@@ -25,9 +25,10 @@ type PersistConn struct {
 	connMs int
 	status int
 	closeCh chan byte
-	errorCh chan byte
+	errorCh chan uint64
 	lastRetry int64
 	retryInterval int64
+	connVer uint64
 }
 
 func (pconn *PersistConn)HealthCheck() {
@@ -37,8 +38,8 @@ func (pconn *PersistConn)HealthCheck() {
 		case <- timer.C:
 		case <- pconn.closeCh:
 			goto close;
-		case <- pconn.errorCh:
-			if pconn.status == PCONN_STATUS_CONNECTED  {
+		case errVer := <- pconn.errorCh:
+			if pconn.status == PCONN_STATUS_CONNECTED && errVer == pconn.connVer {
 				pconn.mutex.Lock()
 				pconn.status = PCONN_STATUS_ERROR
 				pconn.client.Close()
@@ -50,6 +51,7 @@ func (pconn *PersistConn)HealthCheck() {
 			conn, err := net.DialTimeout("tcp", pconn.addr, time.Duration(pconn.connMs) * time.Millisecond)
 			if err == nil {
 				pconn.mutex.Lock()
+				pconn.connVer++
 				pconn.status = PCONN_STATUS_CONNECTED
 				pconn.client = jsonrpc.NewClient(conn)
 				pconn.mutex.Unlock()
@@ -70,9 +72,10 @@ func NewPConn(addr string, connMs int, retryInterval int) *PersistConn {
 		addr: addr,
 		connMs: connMs,
 		closeCh: make(chan byte, 1),
-		errorCh: make(chan byte, 1),
+		errorCh: make(chan uint64, 1),
 		lastRetry: 0,
 		retryInterval: int64(retryInterval) * 1000000,
+		connVer: 0,
 	}
 
 	conn, err := net.DialTimeout("tcp", addr, time.Duration(connMs) * time.Millisecond)
@@ -101,12 +104,13 @@ func (pconn *PersistConn)Call(serviceMethod string, args interface{}, reply inte
 		return errors.New("connection's gone away")
 	}
 	client := pconn.client
+	curVer := pconn.connVer
 	pconn.mutex.Unlock()
 
 	err := client.Call(serviceMethod, args, reply)
 	if err != nil {
 		select {
-		case pconn.errorCh <- byte(1):
+		case pconn.errorCh <- curVer:
 		default:
 		}
 	}
@@ -116,13 +120,12 @@ func (pconn *PersistConn)Call(serviceMethod string, args interface{}, reply inte
 func main() {
 	pconn := NewPConn("127.0.0.1:5000", 1000, 1000)
 
-
 	for i := 0; i < 4; i++ {
 		go func() {
 			for {
 				var count int
 				if err := pconn.Call("JsonrpcHandler.Get", proto.NoArgs{}, &count); err == nil {
-					fmt.Println(count)
+					// fmt.Println(count)
 				}
 			}
 		}()
