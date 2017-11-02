@@ -25,7 +25,7 @@ type PersistConn struct {
 	connMs int
 	status int
 	closeCh chan byte
-	errorCh chan uint64
+	errorCh chan byte
 	lastRetry int64
 	retryInterval int64
 	connVer uint64
@@ -38,16 +38,12 @@ func (pconn *PersistConn)HealthCheck() {
 		case <- timer.C:
 		case <- pconn.closeCh:
 			goto close;
-		case errVer := <- pconn.errorCh:
-			if pconn.status == PCONN_STATUS_CONNECTED && errVer == pconn.connVer {
-				pconn.mutex.Lock()
-				pconn.status = PCONN_STATUS_ERROR
-				pconn.client.Close()
-				pconn.mutex.Unlock()
-			}
+		case <- pconn.errorCh:
 		}
 		now := time.Now().UnixNano()
+		pconn.mutex.Lock()
 		if pconn.status == PCONN_STATUS_ERROR && now - pconn.lastRetry >= pconn.retryInterval {
+			pconn.mutex.Unlock()
 			conn, err := net.DialTimeout("tcp", pconn.addr, time.Duration(pconn.connMs) * time.Millisecond)
 			if err == nil {
 				pconn.mutex.Lock()
@@ -72,7 +68,7 @@ func NewPConn(addr string, connMs int, retryInterval int) *PersistConn {
 		addr: addr,
 		connMs: connMs,
 		closeCh: make(chan byte, 1),
-		errorCh: make(chan uint64, 1),
+		errorCh: make(chan byte, 1),
 		lastRetry: 0,
 		retryInterval: int64(retryInterval) * 1000000,
 		connVer: 0,
@@ -109,10 +105,15 @@ func (pconn *PersistConn)Call(serviceMethod string, args interface{}, reply inte
 
 	err := client.Call(serviceMethod, args, reply)
 	if err != nil {
-		select {
-		case pconn.errorCh <- curVer:
-		default:
+		pconn.mutex.Lock()
+		if pconn.status == PCONN_STATUS_CONNECTED && pconn.connVer == curVer {
+			pconn.status = PCONN_STATUS_ERROR
+			select {
+			case pconn.errorCh <- byte(1):
+			default:
+			}
 		}
+		pconn.mutex.Unlock()
 	}
 	return err
 }
